@@ -93,7 +93,7 @@ function showMainMenu(chatId) {
     bot.sendMessage(chatId, "ወደ ዋናው ማውጫ ገብተዋል:", opts);
 }
 
-// --- 4. Callbacks (Inline Buttons ብቻ - ለ Verify እና Admin) ---
+// --- 4. Callbacks (Inline Buttons ለ Verify እና Admin) ---
 bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
     const data = query.data;
@@ -169,11 +169,16 @@ bot.on('callback_query', async (query) => {
         userStates[chatId] = 'WAITING_CHANNEL_POST';
         bot.sendMessage(chatId, "ወደ ቻናሎቹ የሚላከውን መልዕክት ይጻፉ:");
     }
+    // አዲስ የተጨመረው Add Balance
+    if (data === 'admin_add_balance') {
+        userStates[chatId] = 'WAITING_USER_ID_BALANCE';
+        bot.sendMessage(chatId, "የተጠቃሚውን User ID ያስገቡ:");
+    }
 });
 
-// --- 5. Message Input Handler (ለ Reply Keyboard እና Text ግብዓቶች) ---
+// --- 5. Message Input Handler ---
 bot.on('message', async (msg) => {
-    if (!msg.text || msg.text.startsWith('/')) return; // ኮማንዶችን እና ፎቶዎችን ማለፍ
+    if (!msg.text || msg.text.startsWith('/')) return;
     const chatId = msg.chat.id;
     const text = msg.text;
     const state = userStates[chatId];
@@ -190,7 +195,9 @@ bot.on('message', async (msg) => {
         }
 
         if (text === "💰 Balance") {
-            return bot.sendMessage(chatId, `የእርስዎ ባላንስ: ${user.balance} ብር\n\nቻናላችሁን ማስገባት የምትፈልጉ አናግሩን : @Rich_ard_21`);
+            // የቴሌብር ቁጥር አብሮ እንዲታይ ተደረገ
+            const walletInfo = user.wallet ? `ቴሌብር አካውንት: ${user.wallet}` : "ገና አልተመዘገበም";
+            return bot.sendMessage(chatId, `የእርስዎ ባላንስ: ${user.balance} ብር\n${walletInfo}\n\nቻናላችሁን ማስገባት የምትፈልጉ አናግሩን : @Rich_ard_21`);
         }
 
         if (text === "👛 Wallet") {
@@ -221,7 +228,7 @@ bot.on('message', async (msg) => {
         }
     }
 
-    // State ሎጂኮች (ግብዓት ሲጠየቅ)
+    // State ሎጂኮች
     if (state === 'WAITING_WALLET') {
         user.wallet = text;
         await user.save();
@@ -235,19 +242,16 @@ bot.on('message', async (msg) => {
         
         user.balance -= amount;
         await user.save();
-
         conf.totalWithdrawn += amount;
         await conf.save();
 
-        // ወደ Proof Channel (@omega_proof) መላክ
         const caption = `ID: ${chatId}\n\nAccount or wallet: ${user.wallet}\n\nAmount: ${amount}\n\nሁኔታ : checking`;
         bot.sendPhoto(PROOF_CHANNEL, "12345.jpg", { caption: caption });
-        
         bot.sendMessage(chatId, "ጥያቄዎ ወደ proof channel ተልኳል። ቦቱ እራሱ ልኮታል!");
         delete userStates[chatId];
     }
     
-    // --- Admin Message States ---
+    // Admin Message States
     if (chatId === ADMIN_ID) {
         if (state === 'WAITING_BROADCAST') {
             const users = await User.find();
@@ -255,9 +259,28 @@ bot.on('message', async (msg) => {
             bot.sendMessage(chatId, "መልዕክቱ ለሁሉም ተጠቃሚዎች ተልኳል!");
             delete userStates[chatId];
         }
+        else if (state === 'WAITING_USER_ID_BALANCE') {
+            userStates[chatId] = `WAITING_AMOUNT_BALANCE_${text}`;
+            bot.sendMessage(chatId, "የብር መጠኑን ያስገቡ:");
+        }
+        else if (state.startsWith('WAITING_AMOUNT_BALANCE_')) {
+            const uId = state.split('_')[3];
+            const amount = parseFloat(text);
+            const targetUser = await User.findOne({ userId: uId });
+            if (targetUser) {
+                targetUser.balance += amount;
+                await targetUser.save();
+                bot.sendMessage(chatId, `ለ ${uId} ${amount} ብር ተጨምሯል።`);
+                bot.sendMessage(uId, `🎉 በአድሚን የተጨመረልዎ የባላንስ መጠን: ${amount} ብር`);
+            } else {
+                bot.sendMessage(chatId, "ተጠቃሚው አልተገኘም!");
+            }
+            delete userStates[chatId];
+        }
+        // ... (ሌሎች admin states)
         else if (state === 'WAITING_CHANNEL_ID') {
             userStates[chatId] = `WAITING_CHANNEL_LINK_${text}`;
-            bot.sendMessage(chatId, "አሁን ደግሞ የቻናሉን ሊንክ ያስገቡ (ለምሳሌ: https://t.me/mychannel):");
+            bot.sendMessage(chatId, "የቻናሉን ሊንክ ያስገቡ:");
         }
         else if (state.startsWith('WAITING_CHANNEL_LINK_')) {
             const chId = state.replace('WAITING_CHANNEL_LINK_', '');
@@ -267,46 +290,42 @@ bot.on('message', async (msg) => {
         }
         else if (state === 'WAITING_REF_AMOUNT') {
             const amt = parseFloat(text);
-            if (!isNaN(amt)) {
-                await Config.updateOne({ key: "main" }, { refReward: amt });
-                bot.sendMessage(chatId, `refferal income ወደ ${amt} ተቀይሯል።`);
-            } else {
-                bot.sendMessage(chatId, "እባክዎ ቁጥር ብቻ ያስገቡ!");
-            }
+            await Config.updateOne({ key: "main" }, { refReward: amt });
+            bot.sendMessage(chatId, `refferal income ወደ ${amt} ተቀይሯል።`);
             delete userStates[chatId];
         }
         else if (state === 'WAITING_CHANNEL_POST') {
             const channels = await Channel.find();
             channels.forEach(ch => bot.sendMessage(ch.channelId, text).catch(()=>{}));
-            bot.sendMessage(chatId, "መልዕክቱ admin ወደሆንክባቸው ቻናሎች ተልኳል!");
+            bot.sendMessage(chatId, "መልዕክቱ ለቻናሎቹ ተልኳል!");
             delete userStates[chatId];
         }
     }
 });
 
-// Admin Command መክፈቻ
+// Admin Command
 bot.onText(/\/admin/, (msg) => {
     if (msg.chat.id !== ADMIN_ID) return;
     const opts = {
         reply_markup: {
             inline_keyboard: [
-                [{ text: "📣 Bodcast", callback_data: "admin_broadcast" }],
+                [{ text: "📣 Broadcast", callback_data: "admin_broadcast" }],
                 [{ text: "➕ add channel", callback_data: "admin_add_channel" }, { text: "➖ remove channel", callback_data: "admin_remove_channel" }],
-                [{ text: "💰 refferal income", callback_data: "admin_ref_income" }, { text: "📝 channel post", callback_data: "admin_channel_post" }]
+                [{ text: "💰 Add Balance", callback_data: "admin_add_balance" }],
+                [{ text: "💵 Ref Income", callback_data: "admin_ref_income" }, { text: "📝 Channel Post", callback_data: "admin_channel_post" }]
             ]
         }
     };
     bot.sendMessage(ADMIN_ID, "Admin Panel", opts);
 });
 
-// --- 6. Dummy Web Server (ለ Render አፕሊኬሽን እንዳይዘጋ ለማድረግ) ---
+// Dummy Web Server
 const PORT = process.env.PORT || 3000;
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('Bot is successfully running and active!\n');
 });
 
-// እዚህ ጋር '0.0.0.0' ተጨምሯል 
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`Bot Dummy server is listening on port ${PORT}`);
 });
