@@ -1,11 +1,12 @@
 const TelegramBot = require('node-telegram-bot-api');
 const mongoose = require('mongoose');
+const http = require('http'); // ለ Dummy Server
 
 // 1. መሠረታዊ መረጃዎች (የሰጠኸኝን ተጠቅሜያለሁ)
-const TOKEN = '8964045361:AAEUPmbnyad3GukgQZH3oAKSWj8o3O-sE60';
+const TOKEN = process.env.BOT_TOKEN || '8964045361:AAEUPmbnyad3GukgQZH3oAKSWj8o3O-sE60';
 const ADMIN_ID = 8319043148;
-// MongoDB በትክክል እንዲሰራ 'mongodb+srv://' መጨመር ያስፈልገዋል
-const MONGO_URL = 'mongodb+srv://Alpha:406976aaa@cluster0.sgcjmyi.mongodb.net/omega_bot?retryWrites=true&w=majority';
+const MONGO_URL = process.env.MONGO_URL || 'mongodb+srv://Alpha:406976aaa@cluster0.sgcjmyi.mongodb.net/omega_bot?retryWrites=true&w=majority';
+const PROOF_CHANNEL = '@omega_proof'; // የላክከው ቻናል
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 
@@ -32,7 +33,7 @@ const Config = mongoose.model('Config', {
     totalWithdrawn: { type: Number, default: 0 } 
 });
 
-// State Management (የተጠቃሚዎችን ግብዓት ለመቆጣጠር)
+// State Management
 const userStates = {};
 let botUsername = '';
 bot.getMe().then(me => botUsername = me.username);
@@ -49,7 +50,6 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
     const chatId = msg.chat.id;
     const text = match[1].trim();
     
-    // የሪፈራል ሲስተም መመዝገቢያ
     let referrer = null;
     if (text && !isNaN(text) && Number(text) !== chatId) {
         referrer = Number(text);
@@ -67,7 +67,6 @@ async function sendForceJoin(chatId) {
     const channels = await Channel.find();
     let keyboard = [];
     
-    // Sponsor 1, 2, 3 እያለ ይሰይማል
     channels.forEach((ch, index) => {
         keyboard.push([{ text: `Sponsor ${index + 1}`, url: ch.link }]);
     });
@@ -78,27 +77,29 @@ async function sendForceJoin(chatId) {
     });
 }
 
+// ዋናውን ሜኑ ወደ Reply Keyboard መቀየር (ከታች ኪቦርድ ላይ የሚመጣው)
 function showMainMenu(chatId) {
     const opts = {
         reply_markup: {
-            inline_keyboard: [
-                [{ text: "💰 Balance", callback_data: "balance" }, { text: "💸 Withdraw", callback_data: "withdraw" }],
-                [{ text: "👛 Wallet", callback_data: "wallet" }, { text: "📊 Stats", callback_data: "stats" }],
-                [{ text: "👥 Referral", callback_data: "referral" }]
-            ]
+            keyboard: [
+                [{ text: "💰 Balance" }, { text: "💸 Withdraw" }],
+                [{ text: "👛 Wallet" }, { text: "📊 Stats" }],
+                [{ text: "👥 Referral" }]
+            ],
+            resize_keyboard: true,
+            is_persistent: true
         }
     };
     bot.sendMessage(chatId, "ወደ ዋናው ማውጫ ገብተዋል:", opts);
 }
 
-// --- 4. Callbacks (የ Button ንክኪዎችን መቆጣጠሪያ) ---
+// --- 4. Callbacks (Inline Buttons ብቻ - ለ Verify እና Admin) ---
 bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
     const data = query.data;
     const user = await User.findOne({ userId: chatId });
     const conf = await Config.findOne({ key: "main" });
 
-    // Verify ሎጂክ (ቻናል መግባታቸውን ማረጋገጥ)
     if (data === 'verify') {
         const channels = await Channel.find();
         let allJoined = true;
@@ -111,7 +112,6 @@ bot.on('callback_query', async (query) => {
                     break;
                 }
             } catch (e) {
-                // ቦቱ ቻናሉ ላይ admin ካልሆነ ኤረር ያመጣል
                 allJoined = false; 
             }
         }
@@ -121,7 +121,6 @@ bot.on('callback_query', async (query) => {
                 user.verified = true;
                 await user.save();
                 
-                // ሪፈራል ላደረገው ሰው ብር መጨመር
                 if (user.referrer) {
                     let refUser = await User.findOne({ userId: user.referrer });
                     if (refUser) {
@@ -140,44 +139,7 @@ bot.on('callback_query', async (query) => {
         return;
     }
 
-    // ተጠቃሚው Verify ሳያደርግ Main Button መንካት ከፈለገ መከልከል
-    if (!user.verified && data !== 'verify') {
-        return bot.answerCallbackQuery(query.id, { text: "እባክዎ መጀመሪያ ቻናሎቹን ይቀላቀሉና Verify ያድርጉ!", show_alert: true });
-    }
-
-    // Main Buttons ሎጂክ
-    if (data === 'balance') {
-        bot.sendMessage(chatId, `የእርስዎ ባላንስ: ${user.balance} ብር\n\nቻናላችሁን ማስገባት የምትፈልጉ አናግሩን : @Rich_ard_21`);
-    }
-
-    if (data === 'wallet') {
-        userStates[chatId] = 'WAITING_WALLET';
-        bot.sendMessage(chatId, "telebirr account ይጠይቃል፣ እባክዎ ያስገቡ:");
-    }
-
-    if (data === 'withdraw') {
-        if (!user.wallet) return bot.sendMessage(chatId, "እባክዎ መጀመሪያ Wallet (telebirr) ያስገቡ። (Wallet የሚለውን ይጫኑ)");
-        if (user.balance < 50) return bot.sendMessage(chatId, "ከ 50 ብር በታች ማውጣት አይችሉም።");
-        
-        userStates[chatId] = 'WAITING_WITHDRAW';
-        bot.sendMessage(chatId, "ማውጣት የሚፈልጉትን የብር መጠን ያስገቡ:");
-    }
-
-    if (data === 'stats') {
-        const totalUsers = await User.countDocuments();
-        bot.sendPhoto(chatId, "12345.jpg", { 
-            caption: `📊 ጠቅላላ ተጠቃሚዎች: ${totalUsers}\n💸 ጠቅላላ ወጪ: ${conf.totalWithdrawn} ብር` 
-        });
-    }
-
-    if (data === 'referral') {
-        const refLink = `https://t.me/${botUsername}?start=${chatId}`;
-        bot.sendPhoto(chatId, "12345.jpg", {
-            caption: `Refferal link: \n${refLink}\n\nአንድ ሰው ሲጋብዙ ${conf.refReward} ብር ባላንስ ላይ ያገኛሉ (ቻናል join ብለው verify ሲያደርጉ)።\nበእርስዎ የገቡ ጠቅላላ ሰዎች: ${user.refs}`
-        });
-    }
-
-    // --- Admin Callbacks ---
+    // Admin Callbacks
     if (chatId !== ADMIN_ID) return;
 
     if (data === 'admin_broadcast') {
@@ -186,7 +148,7 @@ bot.on('callback_query', async (query) => {
     }
     if (data === 'admin_add_channel') {
         userStates[chatId] = 'WAITING_CHANNEL_ID';
-        bot.sendMessage(chatId, "የቻናሉን ዩዘርኔም (ለምሳሌ @mychannel) ወይም ቻናል ID ያስገቡ (ቦቱ ቻናሉ ላይ አድሚን መሆን አለበት):");
+        bot.sendMessage(chatId, "የቻናሉን ዩዘርኔም (ለምሳሌ @mychannel) ወይም ቻናል ID ያስገቡ:");
     }
     if (data === 'admin_remove_channel') {
         const channels = await Channel.find();
@@ -209,17 +171,57 @@ bot.on('callback_query', async (query) => {
     }
 });
 
-// --- 5. Message Input Handler (የፅሁፍ ግብዓቶችን መቆጣጠሪያ) ---
+// --- 5. Message Input Handler (ለ Reply Keyboard እና Text ግብዓቶች) ---
 bot.on('message', async (msg) => {
-    if (msg.text && msg.text.startsWith('/')) return; // ኮማንዶችን ወደዚህ እንዳያስገባ
+    if (!msg.text || msg.text.startsWith('/')) return; // ኮማንዶችን እና ፎቶዎችን ማለፍ
     const chatId = msg.chat.id;
     const text = msg.text;
     const state = userStates[chatId];
     
-    if (!state) return;
-
     const user = await User.findOne({ userId: chatId });
+    const conf = await Config.findOne({ key: "main" });
 
+    // የ Main Button መንኪያዎች
+    const mainButtons = ["💰 Balance", "💸 Withdraw", "👛 Wallet", "📊 Stats", "👥 Referral"];
+    
+    if (mainButtons.includes(text)) {
+        if (!user || !user.verified) {
+            return bot.sendMessage(chatId, "እባክዎ መጀመሪያ ቻናሎቹን ይቀላቀሉና Verify ያድርጉ!");
+        }
+
+        if (text === "💰 Balance") {
+            return bot.sendMessage(chatId, `የእርስዎ ባላንስ: ${user.balance} ብር\n\nቻናላችሁን ማስገባት የምትፈልጉ አናግሩን : @Rich_ard_21`);
+        }
+
+        if (text === "👛 Wallet") {
+            userStates[chatId] = 'WAITING_WALLET';
+            return bot.sendMessage(chatId, "telebirr account ይጠይቃል፣ እባክዎ ያስገቡ:");
+        }
+
+        if (text === "💸 Withdraw") {
+            if (!user.wallet) return bot.sendMessage(chatId, "እባክዎ መጀመሪያ Wallet (telebirr) ያስገቡ። (Wallet የሚለውን ይጫኑ)");
+            if (user.balance < 50) return bot.sendMessage(chatId, "ከ 50 ብር በታች ማውጣት አይችሉም።");
+            
+            userStates[chatId] = 'WAITING_WITHDRAW';
+            return bot.sendMessage(chatId, "ማውጣት የሚፈልጉትን የብር መጠን ያስገቡ:");
+        }
+
+        if (text === "📊 Stats") {
+            const totalUsers = await User.countDocuments();
+            return bot.sendPhoto(chatId, "12345.jpg", { 
+                caption: `📊 ጠቅላላ ተጠቃሚዎች: ${totalUsers}\n💸 ጠቅላላ ወጪ: ${conf.totalWithdrawn} ብር` 
+            });
+        }
+
+        if (text === "👥 Referral") {
+            const refLink = `https://t.me/${botUsername}?start=${chatId}`;
+            return bot.sendPhoto(chatId, "12345.jpg", {
+                caption: `Refferal link: \n${refLink}\n\nአንድ ሰው ሲጋብዙ ${conf.refReward} ብር ባላንስ ላይ ያገኛሉ (ቻናል join ብለው verify ሲያደርጉ)።\nበእርስዎ የገቡ ጠቅላላ ሰዎች: ${user.refs}`
+            });
+        }
+    }
+
+    // State ሎጂኮች (ግብዓት ሲጠየቅ)
     if (state === 'WAITING_WALLET') {
         user.wallet = text;
         await user.save();
@@ -234,14 +236,12 @@ bot.on('message', async (msg) => {
         user.balance -= amount;
         await user.save();
 
-        const conf = await Config.findOne({ key: "main" });
         conf.totalWithdrawn += amount;
         await conf.save();
 
-        // Proof Channel መላኪያ Format
+        // ወደ Proof Channel (@omega_proof) መላክ
         const caption = `ID: ${chatId}\n\nAccount or wallet: ${user.wallet}\n\nAmount: ${amount}\n\nሁኔታ : checking`;
-        // ቦቱ @omega_proof ላይ Admin መሆን አለበት
-        bot.sendPhoto("@omega_proof", "12345.jpg", { caption: caption });
+        bot.sendPhoto(PROOF_CHANNEL, "12345.jpg", { caption: caption });
         
         bot.sendMessage(chatId, "ጥያቄዎ ወደ proof channel ተልኳል። ቦቱ እራሱ ልኮታል!");
         delete userStates[chatId];
@@ -299,16 +299,15 @@ bot.onText(/\/admin/, (msg) => {
     bot.sendMessage(ADMIN_ID, "Admin Panel", opts);
 });
 
-console.log("Bot is running and successfully started...");
 // --- 6. Dummy Web Server (ለ Render አፕሊኬሽን እንዳይዘጋ ለማድረግ) ---
-const http = require('http');
 const PORT = process.env.PORT || 3000;
-
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('Bot is successfully running and active!\n');
 });
 
 server.listen(PORT, () => {
-    console.log(`Dummy server is listening on port ${PORT}`);
+    console.log(`Bot Dummy server is listening on port ${PORT}`);
 });
+
+console.log("Bot is running and successfully started...");
