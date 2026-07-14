@@ -2,7 +2,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const mongoose = require('mongoose');
 const http = require('http'); // ለ Dummy Server
 
-// 1. መሠረታዊ መረጃዎች (የሰጠኸኝን ተጠቅሜያለሁ)
+// 1. መሠረታዊ መረጃዎች
 const TOKEN = process.env.BOT_TOKEN || '8964045361:AAEUPmbnyad3GukgQZH3oAKSWj8o3O-sE60';
 const ADMIN_ID = 8319043148;
 const MONGO_URL = process.env.MONGO_URL || 'mongodb+srv://Alpha:406976aaa@cluster0.sgcjmyi.mongodb.net/omega_bot?retryWrites=true&w=majority';
@@ -306,7 +306,8 @@ const server = http.createServer((req, res) => {
     res.end('Bot is successfully running and active!\n');
 });
 
-server.listen(PORT, () => {
+// እዚህ ጋር '0.0.0.0' ተጨምሯል 
+server.listen(PORT, '0.0.0.0', () => {
     console.log(`Bot Dummy server is listening on port ${PORT}`);
 });
 
