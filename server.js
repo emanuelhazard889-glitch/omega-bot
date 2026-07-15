@@ -49,6 +49,7 @@ initConfig();
 bot.onText(/\/start(.*)/, async (msg, match) => {
     const chatId = msg.chat.id;
     const text = match[1].trim();
+    const firstName = msg.from.first_name || "ተጠቃሚ"; // የተጠቃሚውን ስም ለማግኘት
     
     let referrer = null;
     if (text && !isNaN(text) && Number(text) !== chatId) {
@@ -60,21 +61,33 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
         user = await User.create({ userId: chatId, referrer: referrer });
     }
 
-    sendForceJoin(chatId);
+    sendForceJoin(chatId, firstName);
 });
 
-async function sendForceJoin(chatId) {
+async function sendForceJoin(chatId, firstName = "") {
     const channels = await Channel.find();
     let keyboard = [];
+    let row = [];
     
+    // ቻናሎችን ወደ ጎን (ሁለት ሁለት በየመስመሩ) ለመደርደር
     channels.forEach((ch, index) => {
-        keyboard.push([{ text: `Sponsor ${index + 1}`, url: ch.link }]);
+        let url = ch.link.startsWith('http') ? ch.link : `https://t.me/${ch.link.replace('@', '')}`;
+        row.push({ text: `Sponsor ${index + 1}`, url: url });
+        if (row.length === 2) {
+            keyboard.push(row);
+            row = [];
+        }
     });
+    if (row.length > 0) keyboard.push(row); // የቀረ ካለ መጨረሻ ላይ ለመጨመር
+
     keyboard.push([{ text: "✅ Verify", callback_data: "verify" }]);
 
-    bot.sendMessage(chatId, "በቅድሚያ እነዚህን ቻናሎች ይቀላቀሉ፡", {
+    const captionMsg = `ሰላም ${firstName}፣ እንኳን ደህና መጡ!\n\nበቅድሚያ እነዚህን ቻናሎች ይቀላቀሉ፡`;
+
+    bot.sendPhoto(chatId, "5454.jpg", {
+        caption: captionMsg,
         reply_markup: { inline_keyboard: keyboard }
-    });
+    }).catch(err => console.log("Force join error: ", err));
 }
 
 // ዋናውን ሜኑ ወደ Reply Keyboard መቀየር (ከታች ኪቦርድ ላይ የሚመጣው)
@@ -169,7 +182,6 @@ bot.on('callback_query', async (query) => {
         userStates[chatId] = 'WAITING_CHANNEL_POST';
         bot.sendMessage(chatId, "ወደ ቻናሎቹ የሚላከውን መልዕክት ይጻፉ:");
     }
-    // አዲስ የተጨመረው Add Balance
     if (data === 'admin_add_balance') {
         userStates[chatId] = 'WAITING_USER_ID_BALANCE';
         bot.sendMessage(chatId, "የተጠቃሚውን User ID ያስገቡ:");
@@ -195,7 +207,6 @@ bot.on('message', async (msg) => {
         }
 
         if (text === "💰 Balance") {
-            // የቴሌብር ቁጥር አብሮ እንዲታይ ተደረገ
             const walletInfo = user.wallet ? `ቴሌብር አካውንት: ${user.wallet}` : "ገና አልተመዘገበም";
             return bot.sendMessage(chatId, `የእርስዎ ባላንስ: ${user.balance} ብር\n${walletInfo}\n\nቻናላችሁን ማስገባት የምትፈልጉ አናግሩን : @Rich_ard_21`);
         }
@@ -207,7 +218,7 @@ bot.on('message', async (msg) => {
 
         if (text === "💸 Withdraw") {
             if (!user.wallet) return bot.sendMessage(chatId, "እባክዎ መጀመሪያ Wallet (telebirr) ያስገቡ። (Wallet የሚለውን ይጫኑ)");
-            if (user.balance < 50) return bot.sendMessage(chatId, "ከ 50 ብር በታች ማውጣት አይችሉም።");
+            if (user.balance < 52) return bot.sendMessage(chatId, "ከ 52 ብር በታች ማውጣት አይችሉም።");
             
             userStates[chatId] = 'WAITING_WITHDRAW';
             return bot.sendMessage(chatId, "ማውጣት የሚፈልጉትን የብር መጠን ያስገቡ:");
@@ -238,14 +249,16 @@ bot.on('message', async (msg) => {
     else if (state === 'WAITING_WITHDRAW') {
         const amount = parseFloat(text);
         if (isNaN(amount) || amount <= 0) return bot.sendMessage(chatId, "እባክዎ ትክክለኛ የብር መጠን በቁጥር ያስገቡ።");
-        if (amount > user.balance) return bot.sendMessage(chatId, "ባላንስዎ ላይ ያለው ብር አይበቃም።");
+        if (amount > user.balance || amount < 52) return bot.sendMessage(chatId, "ትክክለኛ መጠን ያስገቡ (ከ 52 በላይ)");
         
         user.balance -= amount;
         await user.save();
         conf.totalWithdrawn += amount;
         await conf.save();
 
-        const caption = `ID: ${chatId}\n\nAccount or wallet: ${user.wallet}\n\nAmount: ${amount}\n\nሁኔታ : checking`;
+        const refLink = `https://t.me/${botUsername}?start=${chatId}`;
+        const caption = `ID: ${chatId}\n\nAccount or wallet: ${user.wallet}\n\nAmount: ${amount}\n\nName: Emawayit\n\nሁኔታ : checking\n\nRefferal link:\n${refLink}`;
+        
         bot.sendPhoto(PROOF_CHANNEL, "12345.jpg", { caption: caption });
         bot.sendMessage(chatId, "ጥያቄዎ ወደ proof channel ተልኳል። ቦቱ እራሱ ልኮታል!");
         delete userStates[chatId];
@@ -277,7 +290,6 @@ bot.on('message', async (msg) => {
             }
             delete userStates[chatId];
         }
-        // ... (ሌሎች admin states)
         else if (state === 'WAITING_CHANNEL_ID') {
             userStates[chatId] = `WAITING_CHANNEL_LINK_${text}`;
             bot.sendMessage(chatId, "የቻናሉን ሊንክ ያስገቡ:");
