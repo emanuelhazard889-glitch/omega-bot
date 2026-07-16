@@ -202,6 +202,53 @@ bot.on('message', async (msg) => {
     const mainButtons = ["💰 Balance", "💸 Withdraw", "👛 Wallet", "📊 Stats", "👥 Referral"];
     
     if (mainButtons.includes(text)) {
+        
+        // --- አዲሱ የ Force Join Leave ማረጋገጫ (እዚህ ላይ ተጨምሯል) ---
+        const channels = await Channel.find();
+        let leftChannels = [];
+        
+        // ሰውየው ከየትኛው ቻናል leave እንዳለ ማጣራት
+        for (let ch of channels) {
+            try {
+                let member = await bot.getChatMember(ch.channelId, chatId);
+                if (member.status === 'left' || member.status === 'kicked') {
+                    leftChannels.push(ch);
+                }
+            } catch (e) {
+                leftChannels.push(ch); // ቦቱ ቻናሉን ማግኘት ካልቻለ እንደወጡ ይቆጠራል
+            }
+        }
+
+        // Leave ካለ
+        if (leftChannels.length > 0) {
+            // ዳታቤዝ ላይ ወደ ያልተረጋገጠ (unverified) ይቀየራል
+            if (user && user.verified) {
+                user.verified = false;
+                await user.save();
+            }
+
+            let keyboard = [];
+            let row = [];
+            
+            // የለቀቁትን (Leave ያሏቸውን) ቻናሎች ብቻ Button ማዘጋጀት
+            leftChannels.forEach((ch, index) => {
+                let url = ch.link.startsWith('http') ? ch.link : `https://t.me/${ch.link.replace('@', '')}`;
+                row.push({ text: `Sponsor ${index + 1}`, url: url });
+                if (row.length === 2) {
+                    keyboard.push(row);
+                    row = [];
+                }
+            });
+            if (row.length > 0) keyboard.push(row);
+            keyboard.push([{ text: "✅ Verify", callback_data: "verify" }]);
+
+            return bot.sendPhoto(chatId, "5454.jpg", {
+                caption: "❌ አገልግሎቱን ለመቀጠል እባክዎ ከወጡባቸው ቻናሎች ተመልሰው ይቀላቀሉና Verify ያድርጉ!",
+                reply_markup: { inline_keyboard: keyboard }
+            });
+        }
+        // --- መጨረሻ ---
+
         if (!user || !user.verified) {
             return bot.sendMessage(chatId, "እባክዎ መጀመሪያ ቻናሎቹን ይቀላቀሉና Verify ያድርጉ!");
         }
